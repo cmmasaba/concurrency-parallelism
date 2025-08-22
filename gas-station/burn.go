@@ -1,3 +1,6 @@
+// A controlled way to consume CPU resources for specified amount of time
+// Useful for testing, benchmarking and simulating CPU-intensive workloads
+
 package main
 
 import (
