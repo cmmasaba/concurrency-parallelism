@@ -384,3 +384,122 @@ func (p *linearPipeline) close() {
 	p.airPumpMachine.close()
 	p.cleaningMachine.close()
 }
+
+func newSkipCleaningPipeline(buffer int) *linearPipeline {
+	p := &linearPipeline{
+		fuelMachine:    newMachine("fuelMachine"),
+		airPumpMachine: newMachine("airPumpMachine"),
+		orders:         make(chan order, buffer),
+		fueledOrders:   make(chan order, buffer),
+		done:           make(chan int),
+	}
+
+	go p.pumpFuel()
+	go p.pumpAir()
+
+	return p
+}
+
+func (p *linearPipeline) skipCleaningPipelineStation() served {
+	o := order{clean: make(chan cleaned, 1)}
+
+	p.orders <- o
+
+	clean := <-o.clean
+
+	return promptPayment(clean)
+}
+
+func (p *linearPipeline) skipCleaningPipelinePumpAir() {
+	for o := range p.fueledOrders {
+		o.pump = pumpAir(p.airPumpMachine)
+		p.airPumpedOrders <- o
+	}
+
+	close(p.done)
+}
+
+type splitOrder struct {
+	fueled  fueled
+	pumped  chan pumped
+	cleaned chan cleaned
+}
+
+type splitPipeline struct {
+	fuelingMachine  *machine
+	airPumpMachine  *machine
+	cleaningMachine *machine
+
+	orders        chan splitOrder
+	airPumpOrders chan splitOrder
+	airPumpDone   chan int
+
+	cleanOrders chan splitOrder
+	cleanerDone chan int
+}
+
+func newSplitPipeline(buffer int) *splitPipeline {
+	p := &splitPipeline{
+		fuelingMachine:  newMachine("fuelMachine"),
+		airPumpMachine:  newMachine("airPumpMachine"),
+		cleaningMachine: newMachine("cleaningMachine"),
+		orders:          make(chan splitOrder, buffer),
+		airPumpOrders:   make(chan splitOrder, buffer),
+		airPumpDone:     make(chan int),
+		cleanOrders:     make(chan splitOrder, buffer),
+		cleanerDone:     make(chan int),
+	}
+
+	return p
+}
+
+func (p *splitPipeline) station() served {
+	o := splitOrder{
+		pumped:  make(chan pumped, 1),
+		cleaned: make(chan cleaned, 1),
+	}
+
+	p.airPumpOrders <- o
+
+	p.cleanOrders <- o
+
+	<-o.pumped
+	cleaned := <-o.cleaned
+
+	return promptPayment(cleaned)
+}
+
+func (p *splitPipeline) pumpFuel() {
+	for o := range p.orders {
+		o.fueled = pumpFuel(p.fuelingMachine)
+		p.airPumpOrders <- o
+	}
+
+	close(p.airPumpOrders)
+}
+
+func (p *splitPipeline) pumpAir() {
+	for o := range p.airPumpOrders {
+		o.pumped <- pumpAir(p.airPumpMachine)
+	}
+
+	close(p.airPumpDone)
+}
+
+func (p *splitPipeline) clean() {
+	for o := range p.cleanOrders {
+		o.cleaned <- cleanCar(p.cleaningMachine)
+	}
+
+	close(p.cleanerDone)
+}
+
+func (p *splitPipeline) close() {
+	close(p.airPumpOrders)
+	<-p.airPumpDone
+	close(p.cleanOrders)
+	<-p.cleanerDone
+	p.fuelingMachine.close()
+	p.airPumpMachine.close()
+	p.cleaningMachine.close()
+}
